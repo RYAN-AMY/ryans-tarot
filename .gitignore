@@ -29,3 +29,4 @@ dist-ssr
 .sk-*
 sk-*
 .vercel
+__pycache__/
