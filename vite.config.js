@@ -29,7 +29,10 @@ function interpretPlugin() {
         req.on("end", async () => {
           try {
             const defaultModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
-            const { systemPrompt, userMessage, model = defaultModel } = JSON.parse(body);
+            const { systemPrompt, userMessage, model = defaultModel, cardCount = 3 } = JSON.parse(body);
+
+            const maxTokens = cardCount <= 1 ? 800 : cardCount <= 4 ? 1200 : cardCount <= 9 ? 1500 : 2000;
+            const useCache = !process.env.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL.includes("anthropic.com");
 
             const response = await fetch(apiUrl, {
               method: "POST",
@@ -40,8 +43,10 @@ function interpretPlugin() {
               },
               body: JSON.stringify({
                 model,
-                max_tokens: 2000,
-                system: systemPrompt,
+                max_tokens: maxTokens,
+                system: useCache
+                  ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+                  : systemPrompt,
                 messages: [{ role: "user", content: userMessage }],
                 stream: true,
               }),

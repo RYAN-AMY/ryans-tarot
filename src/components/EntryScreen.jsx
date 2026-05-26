@@ -21,6 +21,7 @@ function Star({ x, y, size, delay, duration }) {
 export default function EntryScreen({ onEnter }) {
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
+  const [swipeProgress, setSwipeProgress] = useState(0);
   const [stars] = useState(() =>
     Array.from({ length: 60 }, () => ({
       x: Math.random() * 100,
@@ -31,20 +32,49 @@ export default function EntryScreen({ onEnter }) {
     }))
   );
 
+  const triggerEnter = () => {
+    if (exiting) return;
+    setExiting(true);
+    setTimeout(onEnter, 800);
+  };
+
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 300);
     const handleKey = (e) => {
-      if (e.key === "Enter") {
-        setExiting(true);
-        setTimeout(onEnter, 800);
-      }
+      if (e.key === "Enter") triggerEnter();
     };
     window.addEventListener("keydown", handleKey);
+
+    let touchStartY = 0;
+    const handleTouchStart = (e) => {
+      touchStartY = e.touches[0].clientY;
+    };
+    const handleTouchMove = (e) => {
+      const dy = touchStartY - e.touches[0].clientY;
+      if (dy > 0) {
+        setSwipeProgress(Math.min(dy / 150, 1));
+      }
+    };
+    const handleTouchEnd = (e) => {
+      const dy = touchStartY - e.changedTouches[0].clientY;
+      if (dy > 60) {
+        triggerEnter();
+      } else {
+        setSwipeProgress(0);
+      }
+    };
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd);
+
     return () => {
       clearTimeout(t);
       window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
     };
-  }, [onEnter]);
+  }, [onEnter, exiting]);
 
   return (
     <div
@@ -59,9 +89,9 @@ export default function EntryScreen({ onEnter }) {
         alignItems: "center",
         justifyContent: "center",
         overflow: "hidden",
-        transition: "opacity 0.8s ease, transform 0.8s ease",
+        transition: exiting ? "opacity 0.8s ease, transform 0.8s ease" : "opacity 0.3s ease",
         opacity: exiting ? 0 : 1,
-        transform: exiting ? "scale(1.05)" : "scale(1)",
+        transform: exiting ? "scale(1.05)" : `translateY(${-swipeProgress * 20}px)`,
       }}
     >
       {/* Stars */}
@@ -130,17 +160,34 @@ export default function EntryScreen({ onEnter }) {
           opacity: visible ? 1 : 0,
           transition: "opacity 1s ease 1.5s",
           zIndex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 12,
         }}
       >
+        {/* Swipe indicator arrow */}
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderLeft: "2px solid rgba(200,180,160,0.4)",
+            borderTop: "2px solid rgba(200,180,160,0.4)",
+            transform: `translateY(${-swipeProgress * 8}px) rotate(45deg)`,
+            opacity: 0.4 + swipeProgress * 0.6,
+            transition: "opacity 0.2s ease",
+          }}
+        />
         <p
           style={{
             color: "rgba(200,180,160,0.6)",
             fontSize: 14,
             letterSpacing: "0.2em",
+            margin: 0,
             animation: `pulse 2s ease-in-out infinite`,
           }}
         >
-          按下 Enter 开启旅程
+          按下 Enter / 上滑 开启旅程
         </p>
       </div>
 

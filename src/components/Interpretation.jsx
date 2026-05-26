@@ -1,30 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Card from "./Card";
-
-function buildPrompt(question, spread, placements, deckMeta) {
-  const cardsInfo = spread.positions
-    .map((pos) => {
-      const card = placements[pos.id];
-      if (!card) return null;
-      const orientation = card.isReversed ? "逆位" : "正位";
-      const meaning = card.isReversed ? card.reversedMeaning : card.uprightMeaning;
-      return `${pos.name}（${pos.description}）：${card.nameZh}(${card.nameEn}) ${orientation} — ${meaning}`;
-    })
-    .filter(Boolean)
-    .join("\n");
-
-  const questionLine = question
-    ? `问题："${question}"。请紧扣此问题解读。`
-    : "";
-
-  return `牌阵：${spread.name}（${spread.description}）
-牌组：${deckMeta.name}
-${questionLine}
-各位置牌面：
-${cardsInfo}
-
-请不要逐张解释牌意，而是将所有牌面的元素融汇成一个完整的解读。用"你"直接对求问者说话，语言温暖有画面感，避免术语堆砌。将各位置的牌意串联成有叙事感的整体结论，约400-500字。`;
-}
+import FeedbackSection from "./FeedbackSection";
 
 const loadingMessages = [
   "塔罗正在解读你的牌面...",
@@ -36,12 +12,10 @@ const loadingMessages = [
   "即将揭示属于你的答案...",
 ];
 
-export default function Interpretation({ question, spread, placements, deckMeta, filterClass }) {
-  const [apiResult, setApiResult] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+export default function Interpretation({ question, spread, placements, deckMeta, filterClass, prefetchedText, isPrefetching, prefetchError, onNeedFetch }) {
   const [loadingMsgIdx, setLoadingMsgIdx] = useState(0);
   const msgIntervalRef = useRef(null);
+  const hasRequested = useRef(false);
 
   const placedCards = spread.positions.map((pos) => placements[pos.id]).filter(Boolean);
   const reversedCount = placedCards.filter((c) => c.isReversed).length;
@@ -49,90 +23,62 @@ export default function Interpretation({ question, spread, placements, deckMeta,
   const majorCount = placedCards.filter((c) => c.arcana === "major").length;
 
   useEffect(() => {
-    let cancelled = false;
+    if (prefetchedText || isPrefetching || hasRequested.current) return;
+    hasRequested.current = true;
+    onNeedFetch?.();
+  }, [prefetchedText, isPrefetching, onNeedFetch]);
 
-    async function fetchInterpretation() {
-      setIsLoading(true);
-      setError(null);
-      setLoadingMsgIdx(0);
+  useEffect(() => {
+    if (!isPrefetching) {
+      clearInterval(msgIntervalRef.current);
+      return;
+    }
+    msgIntervalRef.current = setInterval(() => {
+      setLoadingMsgIdx((prev) => (prev + 1) % loadingMessages.length);
+    }, 1800);
+    return () => clearInterval(msgIntervalRef.current);
+  }, [isPrefetching]);
 
-      // Cycle loading messages
-      msgIntervalRef.current = setInterval(() => {
-        setLoadingMsgIdx((prev) => (prev + 1) % loadingMessages.length);
-      }, 1800);
-
-      try {
-        const systemPrompt = deckMeta?.interpretationPersona
-          || "你是一位经验丰富的塔罗解读师，请基于提供的牌面信息进行深度解读。";
-
-        const userMessage = buildPrompt(question, spread, placements, deckMeta);
-
-        const res = await fetch("/api/interpret", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ systemPrompt, userMessage }),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `请求失败 (${res.status})`);
-        }
-
-        // Read SSE stream
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let fullText = "";
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6);
-              if (data === "[DONE]") continue;
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.text) {
-                  fullText += parsed.text;
-                  if (!cancelled) {
-                    setApiResult(fullText);
-                    setIsLoading(false);
-                  }
-                }
-              } catch {
-                // Skip non-JSON
-              }
+  function renderContent() {
+    if (prefetchedText) {
+      const isStreaming = isPrefetching;
+      return (
+        <div className={`api-result${isStreaming ? " streaming" : ""}`}>
+          {isStreaming && (
+            <div className="streaming-indicator">
+              <span className="streaming-dot" />
+              正在生成...
+            </div>
+          )}
+          {prefetchedText.split("\n").map((line, i) => {
+            if (line.startsWith("### ")) {
+              return <h3 key={i} className="result-card-title">{line.replace("### ", "")}</h3>;
             }
-          }
-        }
-      } catch (err) {
-        if (cancelled) return;
-        console.error("Interpretation fetch error:", err);
-        setError(err.message);
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-          clearInterval(msgIntervalRef.current);
-        }
-      }
+            if (line.startsWith("## ")) {
+              return <h2 key={i} className="result-section-title">{line.replace("## ", "")}</h2>;
+            }
+            if (line.startsWith("**") && line.includes("**")) {
+              return <h4 key={i} className="result-subtitle">{line.replace(/\*\*/g, "")}</h4>;
+            }
+            if (line.trim() === "") return <br key={i} />;
+            return <p key={i} className="result-para">{line}</p>;
+          })}
+        </div>
+      );
     }
 
-    fetchInterpretation();
-    return () => {
-      cancelled = true;
-      if (msgIntervalRef.current) clearInterval(msgIntervalRef.current);
-    };
-  }, [question, spread, placements, deckMeta]);
+    if (prefetchError) {
+      return (
+        <div className="error-container">
+          <p className="error-icon">⚠</p>
+          <p className="error-title">解读暂时无法生成</p>
+          <p className="error-detail">{prefetchError}</p>
+          <p className="error-hint">请确保已设置 ANTHROPIC_API_KEY 环境变量，然后重启开发服务器</p>
+        </div>
+      );
+    }
 
-  // Split the API result into sections for rendering
-  function renderContent() {
-    if (isLoading) {
+    if (isPrefetching) {
       return (
         <div className="loading-container">
           <div className="loading-spinner">
@@ -147,38 +93,6 @@ export default function Interpretation({ question, spread, placements, deckMeta,
               <span key={i} className="loading-dot" style={{ animationDelay: `${i * 0.2}s` }} />
             ))}
           </div>
-        </div>
-      );
-    }
-
-    if (error) {
-      return (
-        <div className="error-container">
-          <p className="error-icon">⚠</p>
-          <p className="error-title">解读暂时无法生成</p>
-          <p className="error-detail">{error}</p>
-          <p className="error-hint">请确保已设置 ANTHROPIC_API_KEY 环境变量，然后重启开发服务器</p>
-        </div>
-      );
-    }
-
-    if (apiResult) {
-      // Parse markdown sections — each "###" starts a card section
-      return (
-        <div className="api-result">
-          {apiResult.split("\n").map((line, i) => {
-            if (line.startsWith("### ")) {
-              return <h3 key={i} className="result-card-title">{line.replace("### ", "")}</h3>;
-            }
-            if (line.startsWith("## ")) {
-              return <h2 key={i} className="result-section-title">{line.replace("## ", "")}</h2>;
-            }
-            if (line.startsWith("**") && line.includes("**")) {
-              return <h4 key={i} className="result-subtitle">{line.replace(/\*\*/g, "")}</h4>;
-            }
-            if (line.trim() === "") return <br key={i} />;
-            return <p key={i} className="result-para">{line}</p>;
-          })}
         </div>
       );
     }
@@ -241,12 +155,22 @@ export default function Interpretation({ question, spread, placements, deckMeta,
       {renderContent()}
 
       {/* Closing */}
-      {apiResult && (
+      {prefetchedText && (
         <div className="encouragement-closing">
           <p>以上解读由塔罗与 AI 共同完成。牌面是一面镜子，照见的是你内心本已具足的智慧。</p>
           <p>最好的预言，是你自己的行动。</p>
           <p className="closing-bless">✦ 祝福你，前路光明 ✦</p>
         </div>
+      )}
+
+      {prefetchedText && (
+        <FeedbackSection
+          deckMeta={deckMeta}
+          spread={spread}
+          placements={placements}
+          question={question}
+          interpretationText={prefetchedText}
+        />
       )}
 
       <style>{`
@@ -445,6 +369,31 @@ export default function Interpretation({ question, spread, placements, deckMeta,
           border: 1px solid rgba(200,160,100,0.12);
           border-radius: 14px;
           margin-top: 20px;
+        }
+        .api-result.streaming {
+          border-color: rgba(200,160,100,0.25);
+          box-shadow: 0 0 20px rgba(200,160,100,0.05);
+        }
+        .streaming-indicator {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid rgba(200,160,100,0.08);
+          color: rgba(200,160,100,0.45);
+          font-size: 12px;
+        }
+        .streaming-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #c9a96e;
+          animation: streamPulse 0.8s ease-in-out infinite;
+        }
+        @keyframes streamPulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
         }
         .result-section-title {
           font-family: 'Georgia', serif;

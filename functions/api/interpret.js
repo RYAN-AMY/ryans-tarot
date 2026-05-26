@@ -1,11 +1,7 @@
-export const runtime = "edge";
-
-const DEFAULT_ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
-
-export async function POST(request) {
-  const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+export async function onRequestPost({ request, env }) {
+  const apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY not set" }), {
+    return new Response(JSON.stringify({ error: "API key not configured" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
@@ -21,13 +17,13 @@ export async function POST(request) {
     });
   }
 
-  const baseUrl = process.env.ANTHROPIC_BASE_URL || DEFAULT_ANTHROPIC_API;
+  const baseUrl = env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages";
   const apiUrl = baseUrl.endsWith("/messages") ? baseUrl : `${baseUrl}/v1/messages`;
-  const defaultModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
+  const defaultModel = env.ANTHROPIC_DEFAULT_HAIKU_MODEL || env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
   const { systemPrompt, userMessage, model = defaultModel, cardCount = 3 } = body;
 
   const maxTokens = cardCount <= 1 ? 800 : cardCount <= 4 ? 1200 : cardCount <= 9 ? 1500 : 2000;
-  const useCache = !process.env.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL.includes("anthropic.com");
+  const useCache = !env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL.includes("anthropic.com");
 
   const response = await fetch(apiUrl, {
     method: "POST",
@@ -49,7 +45,6 @@ export async function POST(request) {
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("Anthropic API error:", response.status, errText);
     return new Response(JSON.stringify({ error: `API error: ${response.status}` }), {
       status: response.status,
       headers: { "Content-Type": "application/json" },

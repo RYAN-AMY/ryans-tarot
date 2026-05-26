@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useTarotSession } from "./hooks/useTarotSession";
 import EntryScreen from "./components/EntryScreen";
 import DeckBackground from "./components/DeckBackground";
@@ -9,6 +9,19 @@ import ArcSpread from "./components/ArcSpread";
 import SpreadBoard from "./components/SpreadBoard";
 import HandArea from "./components/HandArea";
 import Interpretation from "./components/Interpretation";
+import ReviewDashboard from "./components/ReviewDashboard";
+import { buildPrompt } from "./utils/buildPrompt";
+
+const interpretationCache = new Map();
+const MAX_CACHE_SIZE = 50;
+
+function makeCacheKey(deckId, spreadId, placements, question) {
+  const cardKeys = Object.keys(placements).sort().map((posId) => {
+    const c = placements[posId];
+    return `${c.id}_${c.isReversed ? "r" : "u"}`;
+  }).join(",");
+  return `${deckId}|${spreadId}|${cardKeys}|${question || ""}`;
+}
 
 function QuestionInput({ deckMeta, spread, onSubmit, onBack }) {
   const [q, setQ] = useState("");
@@ -96,7 +109,7 @@ function DrawingPhase({ session }) {
   );
 }
 
-function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId }) {
+function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId, prefetchedText, isPrefetching, prefetchError, startPrefetch }) {
   const {
     phase, deck, spread, placements, revealed, drawnCards, question,
     placeCard, removePlacement, revealAll, showInterpretation, PHASES,
@@ -132,7 +145,7 @@ function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId 
           />
           <div style={{ textAlign: "center", marginTop: 24 }}>
             {allPlaced ? (
-              <button className="btn-main" onClick={revealAll}
+              <button className="btn-main" onClick={() => { revealAll(); startPrefetch(); }}
                 style={{ borderColor: c.accent, color: c.accent }}>
                 揭晓命运
               </button>
@@ -185,6 +198,10 @@ function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId 
           question={question}
           spread={spread} placements={placements}
           deckMeta={deck} filterClass={filterClass}
+          prefetchedText={prefetchedText}
+          isPrefetching={isPrefetching}
+          prefetchError={prefetchError}
+          onNeedFetch={startPrefetch}
         />
       )}
     </div>
@@ -194,12 +211,110 @@ function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId 
 export default function App() {
   const session = useTarotSession();
   const [selectedCardId, setSelectedCardId] = useState(null);
+  const [prefetchedText, setPrefetchedText] = useState(null);
+  const [isPrefetching, setIsPrefetching] = useState(false);
+  const [prefetchError, setPrefetchError] = useState(null);
+  const [showReview, setShowReview] = useState(false);
+  const prefetchAbortRef = useRef(null);
+  const prefetchTextRef = useRef("");
+  const prefetchRafRef = useRef(null);
   const {
     phase, deck, spread, question,
     enterApp, selectDeck, selectSpread, submitQuestion,
     startShuffle, stopShuffle,
     goBack, reset, PHASES,
   } = session;
+
+  const startPrefetch = useCallback(() => {
+    if (!spread || !deck || isPrefetching) return;
+
+    const cacheKey = makeCacheKey(deck.id, spread.id, session.placements, question);
+    const cached = interpretationCache.get(cacheKey);
+    if (cached) {
+      setPrefetchedText(cached);
+      return;
+    }
+
+    setIsPrefetching(true);
+    setPrefetchError(null);
+    setPrefetchedText(null);
+
+    const systemPrompt = deck.interpretationPersona
+      || "你是一位经验丰富的塔罗解读师，请基于提供的牌面信息进行深度解读。";
+    const userMessage = buildPrompt(question, spread, session.placements, deck);
+
+    const controller = new AbortController();
+    prefetchAbortRef.current = controller;
+
+    fetch("/api/interpret", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systemPrompt, userMessage, cardCount: spread.cards }),
+      signal: controller.signal,
+    }).then(async (res) => {
+      if (!res.ok) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      prefetchTextRef.current = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.text) {
+                prefetchTextRef.current += parsed.text;
+                if (!prefetchRafRef.current) {
+                  prefetchRafRef.current = requestAnimationFrame(() => {
+                    setPrefetchedText(prefetchTextRef.current);
+                    prefetchRafRef.current = null;
+                  });
+                }
+              }
+            } catch { /* skip */ }
+          }
+        }
+      }
+      if (prefetchRafRef.current) {
+        cancelAnimationFrame(prefetchRafRef.current);
+        prefetchRafRef.current = null;
+      }
+      const finalText = prefetchTextRef.current;
+      setPrefetchedText(finalText);
+      if (finalText) {
+        interpretationCache.set(cacheKey, finalText);
+        if (interpretationCache.size > MAX_CACHE_SIZE) {
+          const firstKey = interpretationCache.keys().next().value;
+          interpretationCache.delete(firstKey);
+        }
+      }
+    }).catch((err) => {
+      if (err.name !== "AbortError") {
+        console.error("Prefetch error:", err);
+        setPrefetchError(err.message || "解读请求失败");
+      }
+    }).finally(() => {
+      setIsPrefetching(false);
+    });
+  }, [spread, deck, question, session.placements, isPrefetching]);
+
+  useEffect(() => {
+    if (phase !== PHASES.REVEALED && phase !== PHASES.INTERPRETATION) {
+      setPrefetchedText(null);
+      setPrefetchError(null);
+    }
+    if (phase !== PHASES.PLACING && phase !== PHASES.REVEALED) {
+      setSelectedCardId(null);
+    }
+  }, [phase]);
 
   const c = deck?.colors || { bg: "#0a0a14", accent: "#c9a96e", text: "#e6e1d8" };
   const filterCSS = deck?.imageFilter
@@ -292,7 +407,12 @@ export default function App() {
             {deck && <span style={{ color: c.accent, fontSize: 12 }}> · {deck.name}</span>}
             {spread && <span style={{ color: `${c.text}70`, fontSize: 12 }}> · {spread.name}</span>}
           </div>
-          <div style={{ width: 90, textAlign: "right" }}>
+          <div style={{ width: 90, textAlign: "right", display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button onClick={() => setShowReview(!showReview)} style={{
+              background: "transparent", border: `1px solid ${c.accent}20`,
+              color: `${c.accent}60`, padding: "4px 10px", borderRadius: 5,
+              cursor: "pointer", fontSize: 11,
+            }}>{showReview ? "塔罗" : "反馈"}</button>
             <button onClick={reset} style={{
               background: "transparent", border: `1px solid ${c.accent}25`,
               color: `${c.accent}80`, padding: "4px 12px", borderRadius: 5,
@@ -303,7 +423,11 @@ export default function App() {
       )}
 
       {/* ====== MAIN CONTENT ====== */}
-      {phase !== PHASES.ENTRY && (
+      {showReview ? (
+        <main style={{ padding: "20px 16px 40px", position: "relative", zIndex: 1 }}>
+          <ReviewDashboard onClose={() => setShowReview(false)} />
+        </main>
+      ) : phase !== PHASES.ENTRY && (
         <main style={{ padding: "20px 16px 40px", position: "relative", zIndex: 1 }}>
           {/* DECK SELECT */}
           {phase === PHASES.DECK_SELECT && <DeckSelector onSelect={selectDeck} />}
@@ -335,7 +459,10 @@ export default function App() {
 
           {/* PLACING / REVEALED / INTERPRETATION */}
           <PlacingPhase session={session} themeColors={c}
-            selectedCardId={selectedCardId} setSelectedCardId={setSelectedCardId} />
+            selectedCardId={selectedCardId} setSelectedCardId={setSelectedCardId}
+            prefetchedText={prefetchedText} isPrefetching={isPrefetching}
+            prefetchError={prefetchError}
+            startPrefetch={startPrefetch} />
         </main>
       )}
 

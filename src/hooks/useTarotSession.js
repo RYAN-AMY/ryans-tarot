@@ -66,7 +66,16 @@ export function useTarotSession() {
     const newDrawn = [...drawnCards, card];
     setDrawnCards(newDrawn);
     if (newDrawn.length >= spread.cards) {
-      setPhase(PHASES.PLACING);
+      if (spread.cards === 1) {
+        // Single card: auto-place, reveal, skip straight to interpretation
+        const posId = spread.positions[0].id;
+        setPlacements({ [posId]: card });
+        const allRevealed = { [posId]: true };
+        setRevealed(allRevealed);
+        setPhase(PHASES.INTERPRETATION);
+      } else {
+        setPhase(PHASES.PLACING);
+      }
     }
   }, [shuffledCards, drawnCards, spread]);
 
@@ -144,7 +153,13 @@ export function useTarotSession() {
       setPhase(PHASES.SHUFFLING);
     } else if (phase === PHASES.REVEALED || phase === PHASES.INTERPRETATION) {
       setRevealed({});
-      setPhase(PHASES.PLACING);
+      if (spread?.cards === 1) {
+        setDrawnCards([]);
+        setPlacements({});
+        setPhase(PHASES.DRAWING);
+      } else {
+        setPhase(PHASES.PLACING);
+      }
     }
   }, [phase]);
 
