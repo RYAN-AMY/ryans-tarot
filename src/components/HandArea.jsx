@@ -1,13 +1,17 @@
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 import Card from "./Card";
 
 export default function HandArea({ drawnCards, placements, deckMeta, selectedCardId, onSelectCard }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const placedIds = new Set(Object.values(placements).map((c) => c?.id).filter(Boolean));
   const unplaced = drawnCards.filter((c) => !placedIds.has(c.id));
 
   if (unplaced.length === 0 && drawnCards.length > 0) {
     return (
       <div className="hand-area hand-done">
-        <p className="hand-done-text">所有牌已放置完毕 ✓</p>
+        <p className="hand-done-text">{t.allPlacedDone}</p>
       </div>
     );
   }
@@ -15,7 +19,7 @@ export default function HandArea({ drawnCards, placements, deckMeta, selectedCar
   return (
     <div className="hand-area">
       <p className="hand-hint">
-        {selectedCardId ? "👆 已选中牌，请点击上方牌阵位置放置" : "👆 先点击下方手牌选中，再点击牌阵位置放置"}
+        {selectedCardId ? t.cardSelected : t.noCardSelected}
       </p>
       <div className="hand-cards">
         {unplaced.map((card) => (
@@ -25,7 +29,7 @@ export default function HandArea({ drawnCards, placements, deckMeta, selectedCar
             onClick={() => onSelectCard?.(card.id)}
           >
             <Card card={card} deckMeta={deckMeta} size="small" flipped={false} />
-            {selectedCardId === card.id && <div className="hand-selected-badge">已选中</div>}
+            {selectedCardId === card.id && <div className="hand-selected-badge">{t.selected}</div>}
           </div>
         ))}
         {drawnCards.length === 0 && (

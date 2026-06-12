@@ -1,32 +1,15 @@
 import { useState } from "react";
+import { getFeedbackRecords, saveFeedback, updateLastFeedback } from "../lib/userStore";
+import { loadLegacyFeedback } from "../lib/userStore";
 
-const STORAGE_KEY = "tarot_feedback_records";
-
-function loadRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveRecords(records) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  } catch { /* storage full */ }
-}
-
-export default function FeedbackSection({ deckMeta, spread, placements, question, interpretationText }) {
+export default function FeedbackSection({ deckMeta, spread, placements, question, interpretationText, user }) {
   const [rating, setRating] = useState(null); // "up" | "down" | null
   const [feedbackText, setFeedbackText] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [showTextarea, setShowTextarea] = useState(false);
 
-  function handleRate(value) {
-    setRating(value);
-    setShowTextarea(value === "down");
-
-    const record = {
+  function buildRecord(value, fbText = "") {
+    return {
       timestamp: new Date().toISOString(),
       deckId: deckMeta?.id,
       deckName: deckMeta?.name,
@@ -46,22 +29,22 @@ export default function FeedbackSection({ deckMeta, spread, placements, question
       }).filter(Boolean) || [],
       interpretationText: interpretationText || "",
       rating: value,
-      feedbackText: "",
+      feedbackText: fbText,
     };
+  }
 
-    const records = loadRecords();
-    records.unshift(record);
-    saveRecords(records);
+  function handleRate(value) {
+    setRating(value);
+    setShowTextarea(value === "down");
+
+    const record = buildRecord(value);
+    saveFeedback({ ...record, user_id: user?.id || null });
     setSubmitted(true);
   }
 
   function handleSubmitFeedback() {
     if (!feedbackText.trim()) return;
-    const records = loadRecords();
-    if (records.length > 0 && records[0].timestamp && records[0].rating === rating) {
-      records[0].feedbackText = feedbackText.trim();
-      saveRecords(records);
-    }
+    updateLastFeedback(feedbackText.trim());
     setSubmitted(true);
     setShowTextarea(false);
   }

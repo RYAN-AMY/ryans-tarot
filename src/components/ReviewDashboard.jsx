@@ -1,14 +1,6 @@
 import { useState, useEffect } from "react";
-
-const STORAGE_KEY = "tarot_feedback_records";
-
-function loadRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
+import { getFeedbackRecords, loadLegacyFeedback } from "../lib/userStore";
+import { filterByRange, weeklyTrend, deckPerformance, categoryHeatmap, generateInsights } from "../utils/analytics";
 
 function exportJSON(records) {
   const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
@@ -57,33 +49,152 @@ function keywordFreq(texts, topN = 8) {
     .slice(0, topN);
 }
 
-export default function ReviewDashboard({ onClose }) {
+function TrendLineChart({ data }) {
+  if (!data.length) return null;
+  const W = 380, H = 160, pad = { top: 16, right: 16, bottom: 28, left: 36 };
+  const pw = W - pad.left - pad.right;
+  const ph = H - pad.top - pad.bottom;
+  const rates = data.map((d) => d.rate);
+  const minR = Math.max(0, Math.min(...rates) - 15);
+  const maxR = Math.min(100, Math.max(...rates) + 5);
+  const x = (i) => pad.left + (i / Math.max(data.length - 1, 1)) * pw;
+  const y = (r) => pad.top + ph - ((r - minR) / (maxR - minR || 1)) * ph;
+
+  const points = data.map((d, i) => `${x(i)},${y(d.rate)}`).join(" ");
+  const areaPoints = `${x(0)},${H - pad.bottom} ${points} ${x(data.length - 1)},${H - pad.bottom}`;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: W }}>
+      {/* Grid lines */}
+      {[minR, (minR + maxR) / 2, maxR].map((v) => (
+        <g key={v}>
+          <line x1={pad.left} y1={y(v)} x2={W - pad.right} y2={y(v)}
+            stroke="rgba(200,160,100,0.08)" strokeWidth="0.5" />
+          <text x={pad.left - 4} y={y(v) + 4} textAnchor="end"
+            fill="rgba(200,160,100,0.3)" fontSize="9">{Math.round(v)}%</text>
+        </g>
+      ))}
+      {/* Area fill */}
+      <polygon points={areaPoints} fill="rgba(200,160,100,0.04)" />
+      {/* Line */}
+      <polyline points={points} fill="none" stroke="#c9a96e" strokeWidth="1.5" />
+      {/* Data points */}
+      {data.map((d, i) => (
+        <circle key={i} cx={x(i)} cy={y(d.rate)} r="2.5" fill="#c9a96e" />
+      ))}
+      {/* X labels */}
+      {data.map((d, i) => (
+        <text key={i} x={x(i)} y={H - 6} textAnchor="middle"
+          fill="rgba(200,160,100,0.3)" fontSize="8">{d.week}</text>
+      ))}
+    </svg>
+  );
+}
+
+function DeckBarChart({ data }) {
+  if (!data.length) return null;
+  const itemH = 28, gap = 6, padLeft = 70, padRight = 60;
+  const W = 380, H = data.length * (itemH + gap) + 16;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: W }}>
+      {data.map((d, i) => {
+        const barW = Math.max(4, (d.rate / 100) * (W - padLeft - padRight));
+        const bwColor = d.rate >= 80 ? "#c9a96e" : d.rate >= 60 ? "#c9a03e" : "#d4786c";
+        const yPos = 8 + i * (itemH + gap);
+        return (
+          <g key={d.name}>
+            <text x={padLeft - 6} y={yPos + itemH / 2 + 4} textAnchor="end"
+              fill="rgba(220,210,190,0.7)" fontSize="11">{d.name}</text>
+            <rect x={padLeft} y={yPos} width={barW} height={itemH} rx="3"
+              fill={bwColor} opacity="0.6" />
+            <rect x={padLeft} y={yPos} width={barW} height={itemH} rx="3"
+              fill="none" stroke={bwColor} strokeWidth="0.5" opacity="0.3" />
+            <text x={padLeft + barW + 6} y={yPos + itemH / 2 + 4}
+              fill="rgba(200,180,160,0.5)" fontSize="10">
+              {d.rate}% ({d.total})
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function CategoryHeatmapGrid({ records }) {
+  const { weeks, categories, data } = categoryHeatmap(records);
+  if (!weeks.length) return null;
+
+  const maxVal = Math.max(1, ...weeks.map((w) => {
+    const weekData = data[w] || {};
+    return Math.max(...categories.map((c) => weekData[c] || 0));
+  }));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: `60px repeat(${weeks.length}, 1fr)`, gap: 3 }}>
+        <div />
+        {weeks.map((w) => (
+          <div key={w} style={{ textAlign: "center", fontSize: 9, color: "rgba(200,180,160,0.35)" }}>{w}</div>
+        ))}
+        {categories.map((cat) => (
+          <>
+            <div key={cat} style={{ fontSize: 10, color: "rgba(200,180,160,0.5)", display: "flex", alignItems: "center" }}>
+              {cat}
+            </div>
+            {weeks.map((w) => {
+              const val = (data[w] && data[w][cat]) || 0;
+              const opacity = val === 0 ? 0.02 : 0.12 + (val / maxVal) * 0.7;
+              return (
+                <div key={`${w}-${cat}`} style={{
+                  aspectRatio: "1",
+                  background: `rgba(200,160,100,${opacity})`,
+                  borderRadius: 3,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 9, color: val > 0 ? "rgba(200,160,100,0.8)" : "transparent",
+                }}>
+                  {val > 0 ? val : ""}
+                </div>
+              );
+            })}
+          </>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function ReviewDashboard({ onClose, user }) {
   const [records, setRecords] = useState([]);
+  const [range, setRange] = useState("all");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setRecords(loadRecords());
-  }, []);
+    const newRecords = getFeedbackRecords();
+    const legacy = loadLegacyFeedback();
+    const legacyTimestamps = new Set(newRecords.map((r) => r.timestamp));
+    const merged = [...newRecords, ...legacy.filter((r) => !legacyTimestamps.has(r.timestamp))];
+    merged.sort((a, b) => new Date(b.timestamp || b.createdAt) - new Date(a.timestamp || a.createdAt));
+    setRecords(merged);
+    setLoading(false);
+  }, [user]);
 
-  const totalReadings = records.length;
-  const upCount = records.filter((r) => r.rating === "up").length;
-  const downCount = records.filter((r) => r.rating === "down").length;
+  const filtered = filterByRange(records, range);
+
+  const totalReadings = filtered.length;
+  const upCount = filtered.filter((r) => r.rating === "up").length;
+  const downCount = filtered.filter((r) => r.rating === "down").length;
   const satisfactionRate = totalReadings > 0 ? Math.round((upCount / totalReadings) * 100) : 0;
 
-  const lowRated = records.filter((r) => r.rating === "down");
+  const lowRated = filtered.filter((r) => r.rating === "down");
   const withFeedback = lowRated.filter((r) => r.feedbackText);
 
-  // Per-deck analysis
-  const deckStats = {};
-  records.forEach((r) => {
-    if (!r.deckName) return;
-    if (!deckStats[r.deckName]) deckStats[r.deckName] = { total: 0, up: 0 };
-    deckStats[r.deckName].total++;
-    if (r.rating === "up") deckStats[r.deckName].up++;
-  });
+  const trendData = weeklyTrend(filtered);
+  const deckData = deckPerformance(filtered);
+  const insights = generateInsights(filtered);
 
-  // Category analysis
   const catStats = {};
-  records.forEach((r) => {
+  filtered.forEach((r) => {
     const cat = categorizeQuestion(r.question);
     if (!catStats[cat]) catStats[cat] = { total: 0, up: 0 };
     catStats[cat].total++;
@@ -94,80 +205,105 @@ export default function ReviewDashboard({ onClose }) {
   const allFeedbackText = withFeedback.map((r) => r.feedbackText);
   const questionKeywords = keywordFreq(lowRatedQuestions);
   const feedbackKeywords = keywordFreq(allFeedbackText);
-
   const labelMap = Object.fromEntries(QUESTION_CATEGORIES.map((c) => [c.key, c.label]));
+
+  const rangeOptions = [
+    { key: "all", label: "全部" },
+    { key: "week", label: "本周" },
+    { key: "month", label: "本月" },
+    { key: "3months", label: "3个月" },
+  ];
 
   return (
     <div className="review-dashboard">
       <div className="review-header">
-        <h2>解读反馈面板</h2>
-        <button className="review-close" onClick={onClose}>← 返回塔罗</button>
-      </div>
-
-      {/* Summary stats */}
-      <div className="review-stats">
-        <div className="stat-card">
-          <div className="stat-num">{totalReadings}</div>
-          <div className="stat-label">总解读数</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-num">{satisfactionRate}%</div>
-          <div className="stat-label">满意度</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-num">{downCount}</div>
-          <div className="stat-label">需要改进</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-num">{withFeedback.length}</div>
-          <div className="stat-label">有文字反馈</div>
+        <h2>{user ? "数据中心" : "解读反馈面板"}</h2>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {totalReadings > 0 && (
+            <div className="range-filter">
+              {rangeOptions.map((opt) => (
+                <button key={opt.key}
+                  className={`range-btn ${range === opt.key ? "active" : ""}`}
+                  onClick={() => setRange(opt.key)}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {onClose && (
+            <button className="review-close" onClick={onClose}>← 返回</button>
+          )}
         </div>
       </div>
 
-      {totalReadings === 0 ? (
+      {loading && (
+        <div className="review-empty"><p>加载中...</p></div>
+      )}
+
+      {!loading && totalReadings === 0 && (
         <div className="review-empty">
           <p>暂无反馈数据</p>
-          <p className="review-hint">完成解读后，用户可通过反馈按钮提交评价。数据存储在浏览器本地。</p>
+          <p className="review-hint">完成解读后，用户可通过反馈按钮提交评价。登录后数据将跨设备同步。</p>
         </div>
-      ) : (
+      )}
+
+      {!loading && totalReadings > 0 && (
         <>
-          {/* Deck performance */}
-          <div className="review-section">
-            <h3>牌组满意度</h3>
-            <div className="review-table">
-              {Object.entries(deckStats)
-                .sort((a, b) => b[1].total - a[1].total)
-                .map(([name, stats]) => {
-                  const rate = stats.total > 0 ? Math.round((stats.up / stats.total) * 100) : 0;
-                  return (
-                    <div key={name} className="review-row">
-                      <span className="review-row-name">{name}</span>
-                      <span className="review-row-count">{stats.total} 次</span>
-                      <span className={`review-row-rate ${rate < 70 ? "low" : ""}`}>{rate}%</span>
-                    </div>
-                  );
-                })}
+          {/* Summary stats */}
+          <div className="review-stats">
+            <div className="stat-card">
+              <div className="stat-num">{totalReadings}</div>
+              <div className="stat-label">总解读数</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-num">{satisfactionRate}%</div>
+              <div className="stat-label">满意度</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-num">{downCount}</div>
+              <div className="stat-label">需要改进</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-num">{withFeedback.length}</div>
+              <div className="stat-label">有文字反馈</div>
             </div>
           </div>
 
-          {/* Category performance */}
-          <div className="review-section">
-            <h3>问题类型满意度</h3>
-            <div className="review-table">
-              {Object.entries(catStats)
-                .sort((a, b) => b[1].total - a[1].total)
-                .map(([cat, stats]) => {
-                  const rate = stats.total > 0 ? Math.round((stats.up / stats.total) * 100) : 0;
-                  return (
-                    <div key={cat} className="review-row">
-                      <span className="review-row-name">{labelMap[cat] || cat}</span>
-                      <span className="review-row-count">{stats.total} 次</span>
-                      <span className={`review-row-rate ${rate < 70 ? "low" : ""}`}>{rate}%</span>
-                    </div>
-                  );
-                })}
+          {/* Insights */}
+          {insights.length > 0 && (
+            <div className="review-section">
+              <h3>系统洞察</h3>
+              <div className="insights-list">
+                {insights.map((ins, i) => (
+                  <div key={i} className="insight-item">✦ {ins}</div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Satisfaction trend */}
+          {trendData.length >= 2 && (
+            <div className="review-section">
+              <h3>满意度趋势</h3>
+              <TrendLineChart data={trendData} />
+            </div>
+          )}
+
+          {/* Deck performance */}
+          {deckData.length > 0 && (
+            <div className="review-section">
+              <h3>牌组表现</h3>
+              <DeckBarChart data={deckData} />
+            </div>
+          )}
+
+          {/* Category heatmap */}
+          {filtered.length >= 3 && (
+            <div className="review-section">
+              <h3>问题类型分布</h3>
+              <CategoryHeatmapGrid records={filtered} />
+            </div>
+          )}
 
           {/* Low-rated readings */}
           {lowRated.length > 0 && (
@@ -177,7 +313,7 @@ export default function ReviewDashboard({ onClose }) {
                 {lowRated.slice(0, 20).map((r, i) => (
                   <div key={i} className="low-rated-item">
                     <div className="lr-meta">
-                      {r.deckName} · {r.spreadName} · {r.timestamp?.slice(0, 10)}
+                      {r.deckName} · {r.spreadName} · {(r.timestamp || r.created_at || "").slice(0, 10)}
                     </div>
                     {r.question && <div className="lr-question">Q: {r.question}</div>}
                     <div className="lr-interp">
@@ -192,17 +328,40 @@ export default function ReviewDashboard({ onClose }) {
             </div>
           )}
 
-          {/* Keyword analysis */}
-          <div className="review-section">
-            <h3>低分问题高频词</h3>
-            <div className="keyword-tags">
-              {questionKeywords.map(([word, count]) => (
-                <span key={word} className="keyword-tag" style={{ opacity: 0.4 + count / questionKeywords[0][1] * 0.6 }}>
-                  {word} ({count})
-                </span>
-              ))}
+          {/* Category performance table (keep as backup) */}
+          {Object.keys(catStats).length > 0 && (
+            <div className="review-section">
+              <h3>问题类型满意度</h3>
+              <div className="review-table">
+                {Object.entries(catStats)
+                  .sort((a, b) => b[1].total - a[1].total)
+                  .map(([cat, stats]) => {
+                    const rate = stats.total > 0 ? Math.round((stats.up / stats.total) * 100) : 0;
+                    return (
+                      <div key={cat} className="review-row">
+                        <span className="review-row-name">{labelMap[cat] || cat}</span>
+                        <span className="review-row-count">{stats.total} 次</span>
+                        <span className={`review-row-rate ${rate < 70 ? "low" : ""}`}>{rate}%</span>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Keyword analysis */}
+          {questionKeywords.length > 0 && (
+            <div className="review-section">
+              <h3>低分问题高频词</h3>
+              <div className="keyword-tags">
+                {questionKeywords.map(([word, count]) => (
+                  <span key={word} className="keyword-tag" style={{ opacity: 0.4 + count / questionKeywords[0][1] * 0.6 }}>
+                    {word} ({count})
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {feedbackKeywords.length > 0 && (
             <div className="review-section">
@@ -226,7 +385,7 @@ export default function ReviewDashboard({ onClose }) {
             导出反馈数据 (JSON)
           </button>
           <p className="export-hint">
-            导出后用 python scripts/analyze-feedback.py 文件名.json 进行深度分析
+            导出后用 python scripts/analyze-feedback.py 做深度分析
           </p>
         </div>
       )}
@@ -243,6 +402,8 @@ export default function ReviewDashboard({ onClose }) {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 28px;
+          flex-wrap: wrap;
+          gap: 12px;
         }
         .review-header h2 {
           font-family: 'Georgia', serif;
@@ -250,6 +411,32 @@ export default function ReviewDashboard({ onClose }) {
           color: #e8dcc8;
           margin: 0;
           font-weight: 400;
+        }
+        .range-filter {
+          display: flex;
+          gap: 4px;
+          background: rgba(200,160,100,0.04);
+          border: 1px solid rgba(200,160,100,0.1);
+          border-radius: 6px;
+          padding: 2px;
+        }
+        .range-btn {
+          padding: 4px 10px;
+          border: none;
+          border-radius: 4px;
+          background: transparent;
+          color: rgba(200,180,160,0.5);
+          font-size: 12px;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s;
+        }
+        .range-btn.active {
+          background: rgba(200,160,100,0.12);
+          color: #c9a96e;
+        }
+        .range-btn:hover:not(.active) {
+          color: rgba(200,180,160,0.8);
         }
         .review-close {
           padding: 6px 16px;
@@ -306,9 +493,25 @@ export default function ReviewDashboard({ onClose }) {
           font-family: 'Georgia', serif;
           font-size: 17px;
           color: #c9a96e;
-          margin: 0 0 12px;
+          margin: 0 0 14px;
           font-weight: 400;
         }
+
+        .insights-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .insight-item {
+          padding: 10px 14px;
+          background: rgba(200,160,100,0.04);
+          border: 1px solid rgba(200,160,100,0.1);
+          border-radius: 8px;
+          font-size: 13px;
+          color: rgba(220,210,190,0.75);
+          line-height: 1.6;
+        }
+
         .review-table {
           background: rgba(200,160,100,0.03);
           border: 1px solid rgba(200,160,100,0.1);
@@ -383,6 +586,7 @@ export default function ReviewDashboard({ onClose }) {
 
         @media (max-width: 500px) {
           .review-stats { grid-template-columns: repeat(2, 1fr); }
+          .range-filter { font-size: 11px; }
         }
       `}</style>
     </div>

@@ -1,4 +1,8 @@
-export default function Card({
+import { memo } from "react";
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
+
+function Card({
   card,
   deckMeta,
   size = "medium",
@@ -14,6 +18,8 @@ export default function Card({
     large: { width: 200, height: 342, fontSize: 15, nameSize: 20 },
   };
   const s = sizes[size];
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
 
   const imagePath = deckMeta?.imageSource === "marseille"
     ? `/decks/marseille/${card.imageMarseille}`
@@ -79,6 +85,8 @@ export default function Card({
           <img
             src={cardBackPath}
             alt="card back"
+            loading="lazy"
+            decoding="async"
             style={{
               width: "100%",
               height: "100%",
@@ -107,6 +115,8 @@ export default function Card({
           <img
             src={imagePath}
             alt={card.nameZh}
+            loading="lazy"
+            decoding="async"
             className={`card-face-img ${filterClass}`}
             style={{
               width: "100%",
@@ -141,7 +151,7 @@ export default function Card({
                 fontSize: s.fontSize - 2, color: "#c47a4a", marginTop: 2,
                 letterSpacing: 1, fontWeight: 500,
               }}>
-                逆位 ↑
+                {t.reversed}
               </span>
             )}
           </div>
@@ -150,3 +160,5 @@ export default function Card({
     </div>
   );
 }
+
+export default memo(Card);

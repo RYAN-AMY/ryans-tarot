@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 
 export default function ShuffleArea({
   deckMeta,
@@ -8,6 +10,8 @@ export default function ShuffleArea({
   onStopShuffle,
   question,
 }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const [showCards, setShowCards] = useState([]);
   const [shuffleCount, setShuffleCount] = useState(0);
   const intervalRef = useRef(null);
@@ -45,7 +49,7 @@ export default function ShuffleArea({
           border: `1px solid ${c.accent}20`,
         }}>
           <span style={{ color: "rgba(200,180,160,0.4)", fontSize: 11, letterSpacing: "0.1em" }}>
-            你的问题
+            {t.yourQuestion}
           </span>
           <p style={{ color: "#c9a96e", fontSize: 16, margin: "4px 0 0", fontStyle: "italic" }}>
             "{question}"
@@ -57,7 +61,7 @@ export default function ShuffleArea({
         fontFamily: "'Georgia',serif", fontSize: 28, color: "#e8dcc8",
         fontWeight: 400, letterSpacing: "0.1em", margin: "0 0 4px",
       }}>
-        洗牌
+        {t.shuffleBtn}
       </h2>
       <p style={{ color: "rgba(200,180,160,0.5)", fontSize: 14, margin: "0 0 6px" }}>
         {spread?.name} · {spread?.cards} 张牌
@@ -87,7 +91,7 @@ export default function ShuffleArea({
               position: "absolute", bottom: 20, width: "100%", textAlign: "center",
               color: "rgba(200,180,160,0.4)", fontSize: 13,
             }}>
-              正在洗牌 · 包含正逆位随机...
+              {t.shuffling}
             </p>
           </>
         ) : (
@@ -105,7 +109,7 @@ export default function ShuffleArea({
               ))}
             </div>
             <p style={{ color: "rgba(200,180,160,0.5)", fontSize: 14 }}>
-              牌已就绪 · 集中在你的问题上，用心感受
+              {t.cardsReady}
             </p>
           </div>
         )}
@@ -116,12 +120,12 @@ export default function ShuffleArea({
         {isShuffling ? (
           <button className="btn-main" onClick={onStopShuffle}
             style={{ borderColor: c.accent, color: c.accent }}>
-            停止洗牌
+            {t.stopShuffle}
           </button>
         ) : (
           <button className="btn-main" onClick={onStartShuffle}
             style={{ borderColor: c.accent, color: c.accent }}>
-            开始洗牌
+            {t.startShuffle}
           </button>
         )}
       </div>

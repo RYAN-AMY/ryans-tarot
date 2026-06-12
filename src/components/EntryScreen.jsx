@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 
 function Star({ x, y, size, delay, duration }) {
   return (
@@ -18,10 +20,11 @@ function Star({ x, y, size, delay, duration }) {
   );
 }
 
-export default function EntryScreen({ onEnter }) {
+export default function EntryScreen({ onDailyFortune, onFullReading }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
-  const [swipeProgress, setSwipeProgress] = useState(0);
   const [stars] = useState(() =>
     Array.from({ length: 60 }, () => ({
       x: Math.random() * 100,
@@ -32,49 +35,10 @@ export default function EntryScreen({ onEnter }) {
     }))
   );
 
-  const triggerEnter = () => {
-    if (exiting) return;
-    setExiting(true);
-    setTimeout(onEnter, 800);
-  };
-
   useEffect(() => {
     const t = setTimeout(() => setVisible(true), 300);
-    const handleKey = (e) => {
-      if (e.key === "Enter") triggerEnter();
-    };
-    window.addEventListener("keydown", handleKey);
-
-    let touchStartY = 0;
-    const handleTouchStart = (e) => {
-      touchStartY = e.touches[0].clientY;
-    };
-    const handleTouchMove = (e) => {
-      const dy = touchStartY - e.touches[0].clientY;
-      if (dy > 0) {
-        setSwipeProgress(Math.min(dy / 150, 1));
-      }
-    };
-    const handleTouchEnd = (e) => {
-      const dy = touchStartY - e.changedTouches[0].clientY;
-      if (dy > 60) {
-        triggerEnter();
-      } else {
-        setSwipeProgress(0);
-      }
-    };
-    window.addEventListener("touchstart", handleTouchStart, { passive: true });
-    window.addEventListener("touchmove", handleTouchMove, { passive: true });
-    window.addEventListener("touchend", handleTouchEnd);
-
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("keydown", handleKey);
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
-      window.removeEventListener("touchend", handleTouchEnd);
-    };
-  }, [onEnter, exiting]);
+    return () => clearTimeout(t);
+  }, []);
 
   return (
     <div
@@ -91,15 +55,14 @@ export default function EntryScreen({ onEnter }) {
         overflow: "hidden",
         transition: exiting ? "opacity 0.8s ease, transform 0.8s ease" : "opacity 0.3s ease",
         opacity: exiting ? 0 : 1,
-        transform: exiting ? "scale(1.05)" : `translateY(${-swipeProgress * 20}px)`,
+        transform: exiting ? "scale(1.05)" : "none",
       }}
     >
-      {/* Stars */}
       {stars.map((s, i) => (
         <Star key={i} {...s} />
       ))}
 
-      {/* Central glow */}
+      {/* Glow */}
       <div
         style={{
           position: "absolute",
@@ -115,7 +78,7 @@ export default function EntryScreen({ onEnter }) {
         }}
       />
 
-      {/* Title */}
+      {/* Content */}
       <div
         style={{
           opacity: visible ? 1 : 0,
@@ -148,47 +111,71 @@ export default function EntryScreen({ onEnter }) {
             animation: `float 3s ease-in-out infinite`,
           }}
         >
-          探索命运之轮
+          {t.entryTitle}
         </p>
       </div>
 
-      {/* Enter prompt */}
+      {/* Mode selection */}
       <div
         style={{
           position: "absolute",
-          bottom: "12%",
+          bottom: "15%",
           opacity: visible ? 1 : 0,
           transition: "opacity 1s ease 1.5s",
           zIndex: 1,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 12,
+          gap: 20,
         }}
       >
-        {/* Swipe indicator arrow */}
-        <div
+        <button
+          onClick={() => { setExiting(true); setTimeout(onDailyFortune, 800); }}
           style={{
-            width: 28,
-            height: 28,
-            borderLeft: "2px solid rgba(200,180,160,0.4)",
-            borderTop: "2px solid rgba(200,180,160,0.4)",
-            transform: `translateY(${-swipeProgress * 8}px) rotate(45deg)`,
-            opacity: 0.4 + swipeProgress * 0.6,
-            transition: "opacity 0.2s ease",
+            background: "transparent",
+            border: "1px solid rgba(200,180,160,0.4)",
+            color: "#e8dcc8",
+            padding: "16px 56px",
+            borderRadius: 8,
+            fontSize: 18,
+            fontFamily: "'Georgia', serif",
+            letterSpacing: "0.12em",
+            cursor: "pointer",
+            transition: "all 0.3s",
+            minWidth: 280,
           }}
-        />
-        <p
-          style={{
-            color: "rgba(200,180,160,0.6)",
-            fontSize: 14,
-            letterSpacing: "0.2em",
-            margin: 0,
-            animation: `pulse 2s ease-in-out infinite`,
-          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#c9a96e"; e.currentTarget.style.color = "#c9a96e"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(200,180,160,0.4)"; e.currentTarget.style.color = "#e8dcc8"; }}
         >
-          按下 Enter / 上滑 开启旅程
-        </p>
+          {t.dailyFortune}
+          <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6, letterSpacing: "0.05em" }}>
+            {t.dailyFortuneSub}
+          </div>
+        </button>
+
+        <button
+          onClick={() => { setExiting(true); setTimeout(onFullReading, 800); }}
+          style={{
+            background: "transparent",
+            border: "1px solid rgba(200,180,160,0.25)",
+            color: "rgba(232,220,200,0.7)",
+            padding: "14px 48px",
+            borderRadius: 8,
+            fontSize: 15,
+            fontFamily: "'Georgia', serif",
+            letterSpacing: "0.1em",
+            cursor: "pointer",
+            transition: "all 0.3s",
+            minWidth: 280,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#c9a96e"; e.currentTarget.style.color = "#c9a96e80"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(200,180,160,0.25)"; e.currentTarget.style.color = "rgba(232,220,200,0.7)"; }}
+        >
+          {t.fullReading}
+          <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6, letterSpacing: "0.05em" }}>
+            {t.fullReadingSub}
+          </div>
+        </button>
       </div>
 
       <style>{`
@@ -199,10 +186,6 @@ export default function EntryScreen({ onEnter }) {
         @keyframes float {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-6px); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.9; }
         }
       `}</style>
     </div>

@@ -4,7 +4,6 @@ export async function onRequestPost(ctx) {
   return handleAnthropicRequest({
     request: ctx.request,
     env: ctx.env,
-    getMaxTokens: (cardCount) =>
-      cardCount <= 1 ? 800 : cardCount <= 4 ? 1200 : cardCount <= 9 ? 1600 : 2000,
+    getMaxTokens: () => 600,
   });
 }

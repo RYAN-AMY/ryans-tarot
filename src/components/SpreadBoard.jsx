@@ -1,7 +1,11 @@
 import { useState, useCallback } from "react";
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 import Card from "./Card";
 
 function PositionSlot({ pos, card, isRevealed, isDragOver, isPlacingPhase, isRevealedPhase, selectedCardId, deckMeta, filterClass, accent, onDragOver, onDragLeave, onDrop, onSlotClick, onRemovePlacement }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   return (
     <div
       className={`position-slot ${isDragOver ? "drag-over" : ""} ${card ? "filled" : ""} ${selectedCardId && !card ? "click-target" : ""}`}
@@ -23,9 +27,9 @@ function PositionSlot({ pos, card, isRevealed, isDragOver, isPlacingPhase, isRev
             isReversed={card.isReversed}
             filterClass={filterClass}
           />
-          {!isRevealed && <div className="slot-unflipped">未翻牌</div>}
+          {!isRevealed && <div className="slot-unflipped">{t.notRevealed}</div>}
           {isPlacingPhase && !isRevealed && (
-            <button className="slot-remove-btn" onClick={(e) => { e.stopPropagation(); onRemovePlacement(pos.id); }} title="移除">×</button>
+            <button className="slot-remove-btn" onClick={(e) => { e.stopPropagation(); onRemovePlacement(pos.id); }} title={t.remove}>×</button>
           )}
         </div>
       ) : (
@@ -43,6 +47,8 @@ export default function SpreadBoard({
   onDrop, onRemovePlacement, phase,
   selectedCardId, onSlotClick,
 }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const [dragOverPos, setDragOverPos] = useState(null);
   const accent = deckMeta?.colors?.accent || "#c9a96e";
 
@@ -73,7 +79,7 @@ export default function SpreadBoard({
   return (
     <div className="spread-board">
       <h3 className="board-title">
-        {spread.name} — {isPlacingPhase ? "点击手牌再点击位置放置" : "牌阵全貌"}
+        {spread.name} — {isPlacingPhase ? t.spreadHintPlacing : t.spreadHintRevealed}
       </h3>
 
       <div className={`board-container board-${spread.id}`} style={{

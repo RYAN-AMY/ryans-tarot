@@ -1,10 +1,14 @@
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 import { decks } from "../data/deckMeta";
 
 export default function DeckSelector({ onSelect, onBack }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   return (
     <div className="selector-page">
-      <h2 className="selector-title">选择你的牌组</h2>
-      <p className="selector-sub">每套牌组有独特的视觉风格与解读视角</p>
+      <h2 className="selector-title">{t.selectDeck}</h2>
+      <p className="selector-sub">{t.selectDeckSub}</p>
       <div className="deck-grid">
         {decks.map((deck) => (
           <div

@@ -1,12 +1,14 @@
 import { useState, useCallback } from "react";
 import { allCards } from "../data/cards";
 import { shuffleDeck } from "../utils/shuffle";
+import { getSpread } from "../data/spreads";
 
 const PHASES = {
   ENTRY: "entry",
+  FORTUNE_SELECT: "fortune_select",
   DECK_SELECT: "deck_select",
-  SPREAD_SELECT: "spread_select",
   QUESTION: "question",
+  SPREAD_SELECT: "spread_select",
   SHUFFLING: "shuffling",
   DRAWING: "drawing",
   PLACING: "placing",
@@ -16,6 +18,7 @@ const PHASES = {
 
 export function useTarotSession() {
   const [phase, setPhase] = useState(PHASES.ENTRY);
+  const [mode, setMode] = useState(null); // "fortune" | "reading"
   const [deck, setDeck] = useState(null);
   const [spread, setSpread] = useState(null);
   const [question, setQuestion] = useState("");
@@ -24,25 +27,49 @@ export function useTarotSession() {
   const [placements, setPlacements] = useState({});
   const [revealed, setRevealed] = useState({});
   const [isShuffling, setIsShuffling] = useState(false);
+  const [followUpHistory, setFollowUpHistory] = useState([]);
 
-  const enterApp = useCallback(() => {
+  // ─── 入口：两条路线 ─────────────────────────────────
+
+  const dailyFortune = useCallback(() => {
+    setMode("fortune");
+    setSpread(getSpread("single"));
     setPhase(PHASES.DECK_SELECT);
   }, []);
 
-  const selectDeck = useCallback((deckMeta) => {
-    setDeck(deckMeta);
-    setPhase(PHASES.SPREAD_SELECT);
+  const fullReading = useCallback(() => {
+    setMode("reading");
+    setPhase(PHASES.DECK_SELECT);
   }, []);
 
-  const selectSpread = useCallback((spreadDef) => {
-    setSpread(spreadDef);
-    setPhase(PHASES.QUESTION);
-  }, []);
+  // ─── 选牌组 ─────────────────────────────────────────
+
+  const selectDeck = useCallback((deckMeta) => {
+    setDeck(deckMeta);
+    if (mode === "fortune") {
+      // 运势路线：选完牌组直接洗牌
+      setPhase(PHASES.SHUFFLING);
+    } else {
+      // 正式路线：进入提问
+      setPhase(PHASES.QUESTION);
+    }
+  }, [mode]);
+
+  // ─── 提问 ───────────────────────────────────────────
 
   const submitQuestion = useCallback((q) => {
     setQuestion(q);
+    setPhase(PHASES.SPREAD_SELECT);
+  }, []);
+
+  // ─── 选牌阵 ─────────────────────────────────────────
+
+  const selectSpread = useCallback((spreadDef) => {
+    setSpread(spreadDef);
     setPhase(PHASES.SHUFFLING);
   }, []);
+
+  // ─── 洗牌 ───────────────────────────────────────────
 
   const startShuffle = useCallback(() => {
     setIsShuffling(true);
@@ -52,13 +79,14 @@ export function useTarotSession() {
     setIsShuffling(false);
     const shuffled = shuffleDeck(allCards);
     setShuffledCards(shuffled);
+    setFollowUpHistory([]);
     setPhase(PHASES.DRAWING);
   }, []);
 
-  // User taps a card from the arc spread to select it
+  // ─── 抽牌 ───────────────────────────────────────────
+
   const selectCardFromArc = useCallback((cardId) => {
     if (!spread) return;
-    // Don't select the same card twice
     if (drawnCards.find((c) => c.id === cardId)) return;
     const card = shuffledCards.find((c) => c.id === cardId);
     if (!card) return;
@@ -67,7 +95,6 @@ export function useTarotSession() {
     setDrawnCards(newDrawn);
     if (newDrawn.length >= spread.cards) {
       if (spread.cards === 1) {
-        // Single card: auto-place, reveal, skip straight to interpretation
         const posId = spread.positions[0].id;
         setPlacements({ [posId]: card });
         const allRevealed = { [posId]: true };
@@ -79,15 +106,15 @@ export function useTarotSession() {
     }
   }, [shuffledCards, drawnCards, spread]);
 
-  // Remove a card from drawn cards (deselect from arc)
   const deselectCard = useCallback((cardId) => {
     setDrawnCards((prev) => prev.filter((c) => c.id !== cardId));
   }, []);
 
+  // ─── 放置 ───────────────────────────────────────────
+
   const placeCard = useCallback((cardId, positionId) => {
     setPlacements((prev) => {
       const next = { ...prev };
-      // Remove this card from any other position
       Object.keys(next).forEach((key) => {
         if (next[key]?.id === cardId) delete next[key];
       });
@@ -120,8 +147,11 @@ export function useTarotSession() {
     setPhase(PHASES.INTERPRETATION);
   }, []);
 
+  // ─── 重置 & 返回 ────────────────────────────────────
+
   const reset = useCallback(() => {
-    setPhase(PHASES.DECK_SELECT);
+    setPhase(PHASES.ENTRY);
+    setMode(null);
     setDeck(null);
     setSpread(null);
     setQuestion("");
@@ -130,18 +160,30 @@ export function useTarotSession() {
     setPlacements({});
     setRevealed({});
     setIsShuffling(false);
+    setFollowUpHistory([]);
   }, []);
 
   const goBack = useCallback(() => {
-    if (phase === PHASES.SPREAD_SELECT) {
+    if (phase === PHASES.DECK_SELECT) {
+      // 回到入口
+      setMode(null);
+      setDeck(null);
+      setSpread(null);
+      setPhase(PHASES.ENTRY);
+    } else if (phase === PHASES.QUESTION) {
       setDeck(null);
       setPhase(PHASES.DECK_SELECT);
-    } else if (phase === PHASES.QUESTION) {
-      setSpread(null);
-      setPhase(PHASES.SPREAD_SELECT);
-    } else if (phase === PHASES.SHUFFLING) {
+    } else if (phase === PHASES.SPREAD_SELECT) {
       setQuestion("");
       setPhase(PHASES.QUESTION);
+    } else if (phase === PHASES.SHUFFLING) {
+      if (mode === "fortune") {
+        setDeck(null);
+        setPhase(PHASES.DECK_SELECT);
+      } else {
+        setSpread(null);
+        setPhase(PHASES.SPREAD_SELECT);
+      }
     } else if (phase === PHASES.DRAWING) {
       setShuffledCards([]);
       setDrawnCards([]);
@@ -153,6 +195,7 @@ export function useTarotSession() {
       setPhase(PHASES.SHUFFLING);
     } else if (phase === PHASES.REVEALED || phase === PHASES.INTERPRETATION) {
       setRevealed({});
+      setFollowUpHistory([]);
       if (spread?.cards === 1) {
         setDrawnCards([]);
         setPlacements({});
@@ -161,13 +204,15 @@ export function useTarotSession() {
         setPhase(PHASES.PLACING);
       }
     }
-  }, [phase]);
+  }, [phase, mode, spread]);
 
   return {
-    phase, deck, spread, question,
+    phase, mode, deck, spread, question,
     shuffledCards, drawnCards, placements, revealed,
     isShuffling, allPlaced,
-    enterApp, selectDeck, selectSpread, submitQuestion,
+    followUpHistory, setFollowUpHistory,
+    dailyFortune, fullReading,
+    selectDeck, submitQuestion, selectSpread,
     startShuffle, stopShuffle,
     selectCardFromArc, deselectCard,
     placeCard, removePlacement,

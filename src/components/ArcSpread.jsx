@@ -1,4 +1,6 @@
 import { useState, useRef, useCallback } from "react";
+import { useLang } from "../contexts/LangContext";
+import { zh, en } from "../i18n/translations";
 
 export default function ArcSpread({
   shuffledCards,
@@ -8,6 +10,8 @@ export default function ArcSpread({
   onSelectCard,
   onDeselectCard,
 }) {
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const lastX = useRef(0);
@@ -71,7 +75,7 @@ export default function ArcSpread({
       onPointerLeave={handlePointerUp}
     >
       <p className="arc-hint">
-        拖动旋转牌弧 · 点击选牌 · 已选 {drawnCards.length}/{spreadCards}
+        {t.arcHint(drawnCards.length, spreadCards)}
       </p>
       <div className="arc-stage">
         {cards.map(({ card, x, y, scale, zIndex, opacity, isSelected }) => (
