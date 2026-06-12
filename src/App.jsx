@@ -1,16 +1,22 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import { useAuth } from "./contexts/AuthContext";
+import { useLang } from "./contexts/LangContext";
+import { zh, en } from "./i18n/translations";
+import LangToggle from "./components/LangToggle";
+import { saveReading } from "./lib/userStore";
 import { useTarotSession } from "./hooks/useTarotSession";
 import EntryScreen from "./components/EntryScreen";
-import DeckBackground from "./components/DeckBackground";
 import DeckSelector from "./components/DeckSelector";
-import SpreadSelector from "./components/SpreadSelector";
-import ShuffleArea from "./components/ShuffleArea";
-import ArcSpread from "./components/ArcSpread";
-import SpreadBoard from "./components/SpreadBoard";
-import HandArea from "./components/HandArea";
-import Interpretation from "./components/Interpretation";
-import ReviewDashboard from "./components/ReviewDashboard";
+import UserMenu from "./components/UserMenu";
 import { buildPrompt } from "./utils/buildPrompt";
+
+const DeckBackground = lazy(() => import("./components/DeckBackground"));
+const SpreadSelector = lazy(() => import("./components/SpreadSelector"));
+const ShuffleArea = lazy(() => import("./components/ShuffleArea"));
+const ArcSpread = lazy(() => import("./components/ArcSpread"));
+const PlacingPhase = lazy(() => import("./components/PlacingPhase"));
+const ReviewDashboard = lazy(() => import("./components/ReviewDashboard"));
+const ReadingHistory = lazy(() => import("./components/ReadingHistory"));
 
 const interpretationCache = new Map();
 const MAX_CACHE_SIZE = 50;
@@ -23,9 +29,12 @@ function makeCacheKey(deckId, spreadId, placements, question) {
   return `${deckId}|${spreadId}|${cardKeys}|${question || ""}`;
 }
 
-function QuestionInput({ deckMeta, spread, onSubmit, onBack }) {
+function QuestionInput({ deckMeta, onSubmit }) {
   const [q, setQ] = useState("");
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
   const c = deckMeta?.colors || {};
+  const deckName = lang === "en" && deckMeta?.nameEn ? deckMeta.nameEn : deckMeta?.name;
 
   return (
     <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center", padding: "0 20px" }}>
@@ -33,15 +42,15 @@ function QuestionInput({ deckMeta, spread, onSubmit, onBack }) {
         fontFamily: "'Georgia', serif", fontSize: 28, color: "#e8dcc8",
         fontWeight: 400, letterSpacing: "0.1em", margin: "0 0 8px",
       }}>
-        你的问题
+        {t.yourQuestion}
       </h2>
       <p style={{ color: "rgba(200,180,160,0.5)", fontSize: 14, margin: "0 0 20px" }}>
-        {deckMeta?.name} · {spread?.name} — 将你心中的疑问告诉塔罗
+        {deckName} — {t.questionSub}
       </p>
       <textarea
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="例如：我接下来的事业发展方向是什么？这段关系将如何发展？..."
+        placeholder={t.questionPlaceholder}
         rows={3}
         style={{
           width: "100%", padding: "16px", borderRadius: 10,
@@ -59,17 +68,15 @@ function QuestionInput({ deckMeta, spread, onSubmit, onBack }) {
           }
         }}
       />
-      <p style={{ color: "rgba(200,180,160,0.3)", fontSize: 11, marginTop: 8 }}>
-        也可以直接点击开始，让塔罗感受你的能量
-      </p>
-      <div style={{ marginTop: 24, display: "flex", gap: 12, justifyContent: "center" }}>
-        <button className="btn-secondary" onClick={onBack}
-          style={{ borderColor: `${c.accent}30`, color: `${c.accent}80` }}>
-          返回
-        </button>
+      <div style={{ marginTop: 24, display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
         <button className="btn-main" onClick={() => onSubmit(q.trim())}
-          style={{ borderColor: c.accent, color: c.accent }}>
-          开始洗牌
+          style={{
+            borderColor: q.trim() ? c.accent : `${c.accent}40`,
+            color: q.trim() ? c.accent : `${c.accent}60`,
+            opacity: q.trim() ? 1 : 0.6,
+          }}
+          disabled={!q.trim()}>
+          {t.checkSpreads}
         </button>
       </div>
     </div>
@@ -81,6 +88,8 @@ function DrawingPhase({ session }) {
     phase, deck, spread, shuffledCards, drawnCards,
     selectCardFromArc, deselectCard, PHASES,
   } = session;
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
 
   if (phase !== PHASES.DRAWING) return null;
 
@@ -90,12 +99,12 @@ function DrawingPhase({ session }) {
         fontFamily: "'Georgia', serif", fontSize: 24, color: "#e8dcc8",
         textAlign: "center", fontWeight: 400, letterSpacing: "0.1em", margin: "0 0 4px",
       }}>
-        选择你的牌
+        {t.drawTitle}
       </h2>
       <p style={{
         textAlign: "center", color: "rgba(200,180,160,0.5)", fontSize: 14, margin: "0 0 20px",
       }}>
-        凭直觉从圆弧中选出 {spread.cards} 张牌
+        {t.drawText(spread.cards)}
       </p>
       <ArcSpread
         shuffledCards={shuffledCards}
@@ -109,121 +118,76 @@ function DrawingPhase({ session }) {
   );
 }
 
-function PlacingPhase({ session, themeColors, selectedCardId, setSelectedCardId, prefetchedText, isPrefetching, prefetchError, startPrefetch }) {
-  const {
-    phase, deck, spread, placements, revealed, drawnCards, question,
-    placeCard, removePlacement, revealAll, showInterpretation, PHASES,
-  } = session;
-  const filterClass = deck?.imageFilter ? "filter-deck" : "";
-  const c = themeColors;
-
-  if (![PHASES.PLACING, PHASES.REVEALED, PHASES.INTERPRETATION].includes(phase)) return null;
-
-  const allPlaced = spread && Object.keys(placements).filter((k) => placements[k]).length === spread.cards;
-
-  return (
-    <div className="placing-page" style={{ maxWidth: 1000, margin: "0 auto" }}>
-      <SpreadBoard
-        spread={spread} placements={placements} revealed={revealed}
-        deckMeta={deck} filterClass={filterClass}
-        onDrop={placeCard} onRemovePlacement={removePlacement} phase={phase}
-        selectedCardId={selectedCardId}
-        onSlotClick={(posId) => {
-          if (selectedCardId) {
-            placeCard(selectedCardId, posId);
-            setSelectedCardId(null);
-          }
-        }}
-      />
-
-      {phase === PHASES.PLACING && (
-        <>
-          <HandArea
-            drawnCards={drawnCards} placements={placements} deckMeta={deck}
-            selectedCardId={selectedCardId}
-            onSelectCard={(id) => setSelectedCardId(id === selectedCardId ? null : id)}
-          />
-          <div style={{ textAlign: "center", marginTop: 24 }}>
-            {allPlaced ? (
-              <button className="btn-main" onClick={() => { revealAll(); startPrefetch(); }}
-                style={{ borderColor: c.accent, color: c.accent }}>
-                揭晓命运
-              </button>
-            ) : (
-              <p style={{ color: "rgba(200,180,160,0.45)", fontSize: 14 }}>
-                将手牌拖放至牌阵对应位置 · 已放置 {Object.keys(placements).filter((k) => placements[k]).length}/{spread.cards}
-              </p>
-            )}
-          </div>
-        </>
-      )}
-
-      {phase === PHASES.REVEALED && (
-        <div style={{ textAlign: "center", marginTop: 32 }}>
-          <div style={{
-            display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap",
-            marginBottom: 24,
-          }}>
-            {spread.positions.map((pos) => {
-              const card = placements[pos.id];
-              if (!card) return null;
-              return (
-                <div key={pos.id} style={{ textAlign: "center" }}>
-                  <div style={{
-                    padding: "6px 12px", borderRadius: 8,
-                    background: card.isReversed ? "rgba(180,100,60,0.2)" : "rgba(200,160,100,0.1)",
-                    border: `1px solid ${card.isReversed ? "rgba(180,100,60,0.4)" : "rgba(200,160,100,0.3)"}`,
-                  }}>
-                    <div style={{ fontSize: 12, color: c.accent, opacity: 0.7 }}>{pos.name}</div>
-                    <div style={{ fontSize: 14, color: "#e8dcc8", fontWeight: 500 }}>
-                      {card.nameZh}
-                    </div>
-                    <div style={{ fontSize: 11, color: card.isReversed ? "#d4a080" : "rgba(200,180,160,0.5)" }}>
-                      {card.isReversed ? "逆位 ↑" : "正位 ↓"}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button className="btn-main" onClick={showInterpretation}
-            style={{ borderColor: c.accent, color: c.accent }}>
-            查看完整解读
-          </button>
-        </div>
-      )}
-
-      {phase === PHASES.INTERPRETATION && (
-        <Interpretation
-          question={question}
-          spread={spread} placements={placements}
-          deckMeta={deck} filterClass={filterClass}
-          prefetchedText={prefetchedText}
-          isPrefetching={isPrefetching}
-          prefetchError={prefetchError}
-          onNeedFetch={startPrefetch}
-        />
-      )}
-    </div>
-  );
-}
-
 export default function App() {
   const session = useTarotSession();
+  const { user } = useAuth();
+  const { lang } = useLang();
+  const t = lang === "zh" ? zh : en;
+
+  function PhaseFallback() {
+    return (
+      <div style={{
+        display: "flex", justifyContent: "center", alignItems: "center",
+        minHeight: 300, color: "rgba(200,180,160,0.3)", fontSize: 14,
+      }}>
+        {t.loading}
+      </div>
+    );
+  }
+
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [prefetchedText, setPrefetchedText] = useState(null);
   const [isPrefetching, setIsPrefetching] = useState(false);
   const [prefetchError, setPrefetchError] = useState(null);
   const [showReview, setShowReview] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [aiRecommendations, setAiRecommendations] = useState(null); // AI 牌阵推荐结果
+  const [isLoadingRec, setIsLoadingRec] = useState(false);
+  const savedReadingRef = useRef(null);
   const prefetchAbortRef = useRef(null);
   const prefetchTextRef = useRef("");
   const prefetchRafRef = useRef(null);
+  const recCacheRef = useRef(new Map()); // 问题→AI推荐缓存
   const {
-    phase, deck, spread, question,
-    enterApp, selectDeck, selectSpread, submitQuestion,
+    phase, mode, deck, spread, question,
+    followUpHistory, setFollowUpHistory,
+    dailyFortune, fullReading,
+    selectDeck, submitQuestion, selectSpread,
     startShuffle, stopShuffle,
     goBack, reset, PHASES,
   } = session;
+
+  // 预取 AI 牌阵推荐：提交问题时立即触发，结果缓存
+  const prefetchRecommend = useCallback((q) => {
+    if (!q?.trim()) return;
+    const cacheKey = q.trim();
+    if (recCacheRef.current.has(cacheKey)) {
+      setAiRecommendations(recCacheRef.current.get(cacheKey));
+      return;
+    }
+    setIsLoadingRec(true);
+    setAiRecommendations(null);
+    fetch("/api/recommend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: cacheKey }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.recommendations?.length >= 2) {
+          recCacheRef.current.set(cacheKey, data.recommendations);
+          setAiRecommendations(data.recommendations);
+        }
+      })
+      .catch(() => { /* 静默失败，前端有本地打分兜底 */ })
+      .finally(() => setIsLoadingRec(false));
+  }, []);
+
+  // 包装 submitQuestion：先提交问题，同时触发 AI 推荐预取
+  const handleSubmitQuestion = useCallback((q) => {
+    submitQuestion(q);
+    prefetchRecommend(q);
+  }, [submitQuestion, prefetchRecommend]);
 
   const startPrefetch = useCallback(() => {
     if (!spread || !deck || isPrefetching) return;
@@ -239,8 +203,18 @@ export default function App() {
     setPrefetchError(null);
     setPrefetchedText(null);
 
-    const systemPrompt = deck.interpretationPersona
-      || "你是一位经验丰富的塔罗解读师，请基于提供的牌面信息进行深度解读。";
+    const sharedMethodology = [
+      "## 核心方法论",
+      "1. 塔罗是镜子而非判决书——你的使命是帮助求问者看见自己，而不是预言命运。永远用'趋势'取代'预言'。",
+      "2. 每张牌在牌阵中的位置决定了它的解读权重——同一张牌在'过去'位置和'未来'位置的解读重心完全不同。请严格遵循每张牌附带的'解读位置权重指引'。",
+      "3. 逆位不是坏牌——它是能量的内转、延迟或被压抑的表达。请帮助求问者看到逆位在当前处境中的建设性意义。",
+      "4. 画面象征符号是通往深层含义的钥匙——引用牌面中的具体意象（人物姿态、自然元素、色彩、动作）来支撑你的解读。",
+      "5. 分析牌与牌之间的关系——哪些牌在呼应？哪些在冲突？有没有一条清晰的叙事弧线从第一张牌指向最后一张？",
+      "6. 始终将解读与求问者的具体问题建立连接。如果没有具体问题，则连接到最常见的生活场景。",
+      "7. 行动建议既要具体可执行，也要温和不强迫——你是智慧的朋友，不是命令的将军。",
+    ].join("\n");
+    const systemPrompt = (deck.interpretationPersona || "你是一位经验丰富的塔罗解读师。")
+      + "\n\n" + sharedMethodology;
     const userMessage = buildPrompt(question, spread, session.placements, deck);
 
     const controller = new AbortController();
@@ -299,7 +273,7 @@ export default function App() {
     }).catch((err) => {
       if (err.name !== "AbortError") {
         console.error("Prefetch error:", err);
-        setPrefetchError(err.message || "解读请求失败");
+        setPrefetchError(err.message || "{t.fetchError}");
       }
     }).finally(() => {
       setIsPrefetching(false);
@@ -316,6 +290,33 @@ export default function App() {
     }
   }, [phase]);
 
+  // Save reading to local store
+  useEffect(() => {
+    if (!user || !prefetchedText || isPrefetching || phase !== PHASES.INTERPRETATION) return;
+    if (!spread || !deck) return;
+    const key = `${deck.id}|${spread.id}|${prefetchedText.slice(0, 40)}`;
+    if (savedReadingRef.current === key) return;
+    savedReadingRef.current = key;
+
+    saveReading({
+      user_id: user.id,
+      deck_id: deck.id,
+      deck_name: deck.name,
+      spread_id: spread.id,
+      spread_name: spread.name,
+      question: question || null,
+      cards: spread.positions.map((pos) => {
+        const card = session.placements[pos.id];
+        if (!card) return null;
+        return {
+          id: card.id, nameZh: card.nameZh, nameEn: card.nameEn,
+          position: pos.name, isReversed: card.isReversed,
+        };
+      }).filter(Boolean),
+      interpretation_text: prefetchedText,
+    });
+  }, [phase, prefetchedText, isPrefetching, user]);
+
   const c = deck?.colors || { bg: "#0a0a14", accent: "#c9a96e", text: "#e6e1d8" };
   const filterCSS = deck?.imageFilter
     ? `.filter-deck.card-face-img { filter: ${deck.imageFilter} !important; }` : "";
@@ -329,17 +330,20 @@ export default function App() {
     }}>
       {filterCSS && <style>{filterCSS}</style>}
 
-      {/* ====== ENTRY ====== */}
-      {phase === PHASES.ENTRY && <EntryScreen onEnter={enterApp} />}
+      {/* ENTRY */}
+      {phase === PHASES.ENTRY && (
+        <EntryScreen onDailyFortune={dailyFortune} onFullReading={fullReading} />
+      )}
 
-      {/* Deck-specific animated background */}
-      {phase !== PHASES.ENTRY && deck && <DeckBackground deckMeta={deck} />}
+      {/* Animated background */}
+      {phase !== PHASES.ENTRY && deck && (
+        <Suspense fallback={null}><DeckBackground deckMeta={deck} /></Suspense>
+      )}
       {phase !== PHASES.ENTRY && !deck && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none",
           background: "#0d1117", transition: "background 0.6s ease",
         }}>
-          {/* Default ambient particles when no deck selected */}
           {Array.from({ length: 30 }, (_, i) => (
             <div key={`def-pt-${i}`} style={{
               position: "absolute",
@@ -354,7 +358,6 @@ export default function App() {
               opacity: 0,
             }} />
           ))}
-          {/* Slow drifting orbs */}
           {Array.from({ length: 3 }, (_, i) => (
             <div key={`def-orb-${i}`} style={{
               position: "absolute",
@@ -382,7 +385,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ====== HEADER ====== */}
+      {/* HEADER */}
       {phase !== PHASES.ENTRY && (
         <header style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -391,78 +394,109 @@ export default function App() {
           position: "sticky", top: 0, zIndex: 101,
           backdropFilter: "blur(10px)", background: `${c.bg}dd`,
         }}>
-          <div style={{ width: 90 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 150 }}>
             {phase !== PHASES.DECK_SELECT && (
               <button onClick={goBack} style={{
                 background: "transparent", border: `1px solid ${c.accent}35`,
                 color: `${c.accent}aa`, padding: "4px 12px", borderRadius: 5,
                 cursor: "pointer", fontSize: 12,
-              }}>← 返回</button>
+              }}>{t.back}</button>
             )}
+            <UserMenu
+              accent={c.accent}
+              onShowReview={() => { setShowReview(true); setShowHistory(false); }}
+              onShowHistory={() => { setShowHistory(true); setShowReview(false); }}
+            />
           </div>
           <div style={{ textAlign: "center" }}>
             <span style={{
               fontFamily: "'Georgia',serif", fontSize: 17, color: "#e8dcc8", letterSpacing: "0.08em",
-            }}>RYAN's Tarot</span>
-            {deck && <span style={{ color: c.accent, fontSize: 12 }}> · {deck.name}</span>}
-            {spread && <span style={{ color: `${c.text}70`, fontSize: 12 }}> · {spread.name}</span>}
+            }}>{t.brand}</span>
+            {mode === "fortune" && <span style={{ color: c.accent, fontSize: 12 }}> · {t.fortuneMode}</span>}
+            {deck && mode !== "fortune" && <span style={{ color: c.accent, fontSize: 12 }}> · {lang === "en" && deck.nameEn ? deck.nameEn : deck.name}</span>}
+            {spread && <span style={{ color: `${c.text}70`, fontSize: 12 }}> · {lang === "en" && spread.nameEn ? spread.nameEn : spread.name}</span>}
           </div>
-          <div style={{ width: 90, textAlign: "right", display: "flex", gap: 6, justifyContent: "flex-end" }}>
-            <button onClick={() => setShowReview(!showReview)} style={{
-              background: "transparent", border: `1px solid ${c.accent}20`,
-              color: `${c.accent}60`, padding: "4px 10px", borderRadius: 5,
-              cursor: "pointer", fontSize: 11,
-            }}>{showReview ? "塔罗" : "反馈"}</button>
+          <div style={{ width: 90, textAlign: "right", display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center" }}>
+            <LangToggle accent={c.accent} />
             <button onClick={reset} style={{
               background: "transparent", border: `1px solid ${c.accent}25`,
               color: `${c.accent}80`, padding: "4px 12px", borderRadius: 5,
               cursor: "pointer", fontSize: 12,
-            }}>重新开始</button>
+            }}>{t.restart}</button>
           </div>
         </header>
       )}
 
-      {/* ====== MAIN CONTENT ====== */}
-      {showReview ? (
+      {/* MAIN CONTENT */}
+      {showHistory ? (
         <main style={{ padding: "20px 16px 40px", position: "relative", zIndex: 1 }}>
-          <ReviewDashboard onClose={() => setShowReview(false)} />
+          <Suspense fallback={<PhaseFallback />}>
+            <ReadingHistory onClose={() => setShowHistory(false)} />
+          </Suspense>
+        </main>
+      ) : showReview ? (
+        <main style={{ padding: "20px 16px 40px", position: "relative", zIndex: 1 }}>
+          <Suspense fallback={<PhaseFallback />}>
+            <ReviewDashboard onClose={() => setShowReview(false)} user={user} />
+          </Suspense>
         </main>
       ) : phase !== PHASES.ENTRY && (
         <main style={{ padding: "20px 16px 40px", position: "relative", zIndex: 1 }}>
           {/* DECK SELECT */}
           {phase === PHASES.DECK_SELECT && <DeckSelector onSelect={selectDeck} />}
 
-          {/* SPREAD SELECT */}
-          {phase === PHASES.SPREAD_SELECT && deck && (
-            <SpreadSelector deckMeta={deck} onSelect={selectSpread} onBack={goBack} />
+          {/* QUESTION (reading path only) */}
+          {phase === PHASES.QUESTION && deck && (
+            <QuestionInput deckMeta={deck}
+              onSubmit={handleSubmitQuestion} />
           )}
 
-          {/* QUESTION INPUT */}
-          {phase === PHASES.QUESTION && deck && spread && (
-            <QuestionInput deckMeta={deck} spread={spread}
-              onSubmit={submitQuestion} onBack={goBack} />
+          {/* SPREAD SELECT (reading path, after question) */}
+          {phase === PHASES.SPREAD_SELECT && deck && (
+            <Suspense fallback={<PhaseFallback />}>
+              <SpreadSelector deckMeta={deck} onSelect={selectSpread}
+                onBack={goBack} question={question}
+                aiRecommendations={aiRecommendations}
+                isLoadingRec={isLoadingRec} />
+            </Suspense>
           )}
 
           {/* SHUFFLING */}
           {phase === PHASES.SHUFFLING && deck && spread && (
-            <ShuffleArea
-              deckMeta={deck} spread={spread}
-              isShuffling={session.isShuffling}
-              onStartShuffle={startShuffle}
-              onStopShuffle={stopShuffle}
-              question={question}
-            />
+            <Suspense fallback={<PhaseFallback />}>
+              <ShuffleArea
+                deckMeta={deck} spread={spread}
+                isShuffling={session.isShuffling}
+                onStartShuffle={startShuffle}
+                onStopShuffle={stopShuffle}
+                question={question}
+              />
+            </Suspense>
           )}
 
-          {/* DRAWING (Arc spread) */}
+          {/* DRAWING */}
           <DrawingPhase session={session} />
 
           {/* PLACING / REVEALED / INTERPRETATION */}
-          <PlacingPhase session={session} themeColors={c}
-            selectedCardId={selectedCardId} setSelectedCardId={setSelectedCardId}
-            prefetchedText={prefetchedText} isPrefetching={isPrefetching}
-            prefetchError={prefetchError}
-            startPrefetch={startPrefetch} />
+          <Suspense fallback={<PhaseFallback />}>
+            <PlacingPhase session={session} themeColors={c}
+              selectedCardId={selectedCardId} setSelectedCardId={setSelectedCardId}
+              prefetchedText={prefetchedText} isPrefetching={isPrefetching}
+              prefetchError={prefetchError}
+              startPrefetch={startPrefetch}
+              followUpHistory={followUpHistory}
+              onUpdateFollowUpHistory={setFollowUpHistory}
+              user={user} />
+          </Suspense>
+
+          {/* Disclaimer */}
+          <div style={{
+            textAlign: "center", padding: "40px 20px 10px",
+            color: "rgba(200,180,160,0.25)", fontSize: 11,
+            letterSpacing: "0.05em",
+          }}>
+            {t.disclaimer}
+          </div>
         </main>
       )}
 
